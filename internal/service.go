@@ -201,21 +201,6 @@ func (s *Service) ReadMessages(ctx context.Context) error {
 				}
 				s.seenMessages[idAttr] = true
 
-				contentElement, err := message.QuerySelector("div[id^='message-content-']")
-				if err != nil {
-					s.logger.Error().Err(err).Msg("Failed to get message content element")
-					continue
-				}
-				if contentElement == nil {
-					s.logger.Error().Msg("Message content element not found")
-					continue
-				}
-				content, err := contentElement.InnerText()
-				if err != nil {
-					s.logger.Error().Err(err).Msg("Failed to get message text")
-					continue
-				}
-
 				usernameElement, err := message.QuerySelector("h3 span span")
 				if err != nil {
 					s.logger.Error().Err(err).Msg("Failed to get username element")
@@ -238,9 +223,14 @@ func (s *Service) ReadMessages(ctx context.Context) error {
 					continue
 				}
 
-				isMentioned := false
+				isReply, err := s.isReplyToBot(message)
+				if err != nil {
+					s.logger.Error().Err(err).Msg("Failed to check if message is a reply to bot")
+					continue
+				}
 
-				mentionElements, err := contentElement.QuerySelectorAll("span.mention")
+				isMentioned := false
+				mentionElements, err := message.QuerySelectorAll("div[class*='markup'] span.mention")
 				if err != nil {
 					s.logger.Error().Err(err).Msg("Failed to get mention elements")
 					continue
@@ -259,24 +249,32 @@ func (s *Service) ReadMessages(ctx context.Context) error {
 					}
 				}
 
-				isReply, err := s.isReplyToBot(message)
-				if err != nil {
-					s.logger.Error().Err(err).Msg("Failed to check if message is a reply to bot")
-					continue
-				}
-
 				if isMentioned || isReply {
-					fmt.Println("Detected message to bot:", content)
-
-					cleanContent, err := contentElement.Evaluate(`node => node.innerText.replace(/@\w+/g, '')`, nil)
+					contentElement, err := message.QuerySelector("div[class*='contents'] > div[class*='markup']")
 					if err != nil {
-						s.logger.Error().Err(err).Msg("Failed to clean message content")
+						s.logger.Error().Err(err).Msg("Failed to get message content element")
 						continue
 					}
-					messageText := cleanContent.(string)
-					messageText = strings.TrimSpace(messageText)
+					if contentElement == nil {
+						s.logger.Error().Msg("Message content element not found")
+						continue
+					}
+					content, err := contentElement.InnerText()
+					if err != nil {
+						s.logger.Error().Err(err).Msg("Failed to get message text")
+						continue
+					}
+					content = strings.TrimSpace(content)
+					fmt.Println("Detected message to bot:", content)
 
-					responseText, err := s.askChatGPT(messageText)
+					cleanContent := content
+					for _, mention := range mentionElements {
+						mentionText, _ := mention.InnerText()
+						cleanContent = strings.ReplaceAll(cleanContent, mentionText, "")
+					}
+					cleanContent = strings.TrimSpace(cleanContent)
+
+					responseText, err := s.askChatGPT(cleanContent)
 					if err != nil {
 						s.logger.Error().Err(err).Msg("Failed to get response from ChatGPT")
 						continue
@@ -284,7 +282,7 @@ func (s *Service) ReadMessages(ctx context.Context) error {
 
 					fmt.Println("ChatGPT response:", responseText)
 
-					if err := s.replyInChat(responseText); err != nil {
+					if err := s.typeInChat(responseText); err != nil {
 						s.logger.Error().Err(err).Msg("Failed to reply in chat")
 						continue
 					}
@@ -444,7 +442,7 @@ func (s *Service) updateConversationHistory(userMessage, assistantMessage map[st
 	}
 }
 
-func (s *Service) replyInChat(response string) error {
+func (s *Service) typeInChat(response string) error {
 	inputBox, err := s.page.QuerySelector("div[role='textbox']")
 	if err != nil {
 		return fmt.Errorf("failed to find text input box: %w", err)
