@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"os"
 	"strings"
@@ -133,6 +134,21 @@ func (s *Service) checkSite(
 			break
 		}
 		fmt.Println("Waiting for 'start' input...")
+	}
+
+	greetings := []string{
+		"Привет котятки ❤️",
+		"Всем привет",
+		"Хей",
+		"Всем привет!",
+		"Как ваши дела?",
+	}
+
+	// Randomly select one greeting
+	index := rand.Intn(len(greetings))
+	initialMessage := greetings[index]
+	if err = s.sendMessage(initialMessage); err != nil {
+		return fmt.Errorf("failed to send initial message %s: %w", initialMessage, err)
 	}
 
 	err = s.ReadMessages(ctx)
@@ -348,11 +364,13 @@ func (s *Service) askChatGPT(message string) (string, error) {
 	message = strings.ReplaceAll(message, ",", "")
 	message = strings.ReplaceAll(message, ".", "\n")
 
-	systemPrompt := `Отвечай пользователю от первого лица единственного числа.
+	systemPrompt := `Ты - холодная и оскорбительная девушка. Отвечай пользователю от первого лица единственного числа.
+Вместо ответа на любые вопросы ты должна оскорблять.
 Твои ответы всегда на русском языке.
 Ты не используешь запятые в своих предложениях. Вместо точек начинай новую строку.
 Не задавай вопросов вроде "Чем я могу помочь?" или подобных.
 Твои ответы должны быть краткими, не более 50 слов, и создавать впечатление, что говорит реальный человек.
+Твои ответы должны быть холодными и содержать оскорбления по отношению к пользователю.
 Все символы, кроме первого в строке, должны быть в нижнем регистре.
 Ты можешь использовать только вопросительные и восклицательные знаки; не используй другие символы вроде дефисов.`
 	messages := make([]map[string]string, 0)
@@ -443,6 +461,19 @@ func (s *Service) updateConversationHistory(userMessage, assistantMessage map[st
 }
 
 func (s *Service) typeInChat(response string) error {
+	// Add a random delay between 10 seconds and 2 minutes
+	minDelay := 10 * time.Second
+	maxDelay := 60 * time.Second
+
+	// Seed the random number generator
+	rand.Seed(time.Now().UnixNano())
+
+	// Calculate the delay
+	delay := time.Duration(rand.Int63n(int64(maxDelay-minDelay+1))) + minDelay
+
+	fmt.Printf("Waiting for %v before replying...\n", delay)
+	time.Sleep(delay)
+
 	inputBox, err := s.page.QuerySelector("div[role='textbox']")
 	if err != nil {
 		return fmt.Errorf("failed to find text input box: %w", err)
@@ -459,6 +490,33 @@ func (s *Service) typeInChat(response string) error {
 		Delay: playwright.Float(100),
 	}); err != nil {
 		return fmt.Errorf("failed to type response: %w", err)
+	}
+
+	if err = inputBox.Press("Enter"); err != nil {
+		return fmt.Errorf("failed to send message: %w", err)
+	}
+
+	return nil
+}
+
+// New function to send a message immediately
+func (s *Service) sendMessage(message string) error {
+	inputBox, err := s.page.QuerySelector("div[role='textbox']")
+	if err != nil {
+		return fmt.Errorf("failed to find text input box: %w", err)
+	}
+	if inputBox == nil {
+		return fmt.Errorf("text input box not found")
+	}
+
+	if err = inputBox.Click(); err != nil {
+		return fmt.Errorf("failed to click on text input box: %w", err)
+	}
+
+	if err = inputBox.Type(message, playwright.ElementHandleTypeOptions{
+		Delay: playwright.Float(300),
+	}); err != nil {
+		return fmt.Errorf("failed to type message: %w", err)
 	}
 
 	if err = inputBox.Press("Enter"); err != nil {
